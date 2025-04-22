@@ -7,38 +7,66 @@ def csv_to_binary(input_csv):
     output_file = os.path.splitext(input_csv)[0] + ".dat"
 
     try:
-        with open(input_csv, "r", encoding="utf-8") as csvfile:
-            reader = csv.reader(csvfile, delimiter=';')
+        # Buka file CSV dengan mode binary untuk mempertahankan null characters
+        with open(input_csv, "rb") as csvfile:
+            # Baca seluruh konten
+            raw_content = csvfile.read()
+
+            # Decode dengan UTF-8 sambil menangani karakter null
+            content = raw_content.decode('utf-8', errors='replace')
+
+            # Proses parsing CSV
+            lines = content.splitlines()
+            reader = csv.reader(lines, delimiter=';')
             next(reader)  # Skip header row
-            data = [(int(row[0]), row[2].encode("utf-8")) for row in reader]
+
+            data = []
+            for row in reader:
+                if len(row) < 3:
+                    continue
+
+                try:
+                    string_id = int(row[0])
+                except ValueError:
+                    continue
+
+                # Dapatkan string value dalam bentuk bytes asli (termasuk null)
+                original_bytes = row[2].encode('utf-8', errors='replace')
+
+                # Temukan posisi null character dalam string
+                null_positions = [i for i, c in enumerate(row[2]) if ord(c) == 0]
+
+                # Rekonstruksi bytes dengan null characters
+                value = bytearray()
+                for i, b in enumerate(original_bytes):
+                    if i in null_positions:
+                        value.append(0)  # Pertahankan null
+                    else:
+                        value.append(b)
+
+                data.append((string_id, bytes(value)))
 
         count = len(data)
-        header_size = 8 + count * 16  # 4 bytes kosong + 4 bytes count + (16 bytes per string header)
+        header_size = 8 + count * 16
 
         with open(output_file, "wb") as f:
-            # Tulis 4 bytes kosong
             f.write(b"\x00" * 4)
-            # Tulis count dalam format little endian
             f.write(struct.pack("<I", count))
 
-            # Tulis header dan kumpulkan string data
             string_data = b""
             current_offset = header_size
 
             for string_id, value in data:
                 length = len(value)
 
-                # Tulis header untuk string ini
-                f.write(struct.pack("<I", current_offset))  # Offset
-                f.write(struct.pack("<I", length))          # Length
-                f.write(struct.pack("<I", string_id))       # ID
-                f.write(b"\x00" * 4)                       # 4 bytes kosong
+                f.write(struct.pack("<I", current_offset))
+                f.write(struct.pack("<I", length))
+                f.write(struct.pack("<I", string_id))
+                f.write(b"\x00" * 4)
 
-                # Tambahkan string ke data
                 string_data += value + b"\x00"
-                current_offset += length + 1  # +1 untuk null terminator
+                current_offset += length + 1
 
-            # Tulis semua string data setelah header
             f.write(string_data)
 
         print(f"Conversion successful! Binary saved as: {output_file}")

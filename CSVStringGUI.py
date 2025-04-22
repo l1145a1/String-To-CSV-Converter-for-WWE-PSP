@@ -108,38 +108,75 @@ class StringConverterApp:
             messagebox.showerror("Error", f"Conversion failed: {str(e)}")
 
     def csv_to_binary(self, input_csv, output_file):
-        with open(input_csv, "r", encoding="utf-8") as csvfile:
-            reader = csv.reader(csvfile, delimiter=';')
-            next(reader)  # Skip header row
-            data = [(int(row[0]), row[2].encode("utf-8")) for row in reader]
+        try:
+            # Open CSV file in binary mode to preserve null characters
+            with open(input_csv, "rb") as csvfile:
+                # Read raw content and decode with null character handling
+                raw_content = csvfile.read()
+                content = raw_content.decode('utf-8', errors='replace')
 
-        count = len(data)
-        header_size = 8 + count * 16  # 4 empty + 4 count + (16 per string header)
+                # Process CSV content
+                lines = content.splitlines()
+                reader = csv.reader(lines, delimiter=';')
+                next(reader)  # Skip header row
 
-        with open(output_file, "wb") as f:
-            # Write file header
-            f.write(b"\x00" * 4)  # Empty header
-            f.write(struct.pack("<I", count))  # String count
+                data = []
+                for row in reader:
+                    if len(row) < 3:
+                        continue
 
-            # Write string headers and collect data
-            string_data = b""
-            current_offset = header_size
+                    try:
+                        string_id = int(row[0])
+                    except ValueError:
+                        continue
 
-            for string_id, value in data:
-                length = len(value)
+                    # Get string value as bytes (preserving nulls)
+                    original_bytes = row[2].encode('utf-8', errors='replace')
 
-                # Write string header
-                f.write(struct.pack("<I", current_offset))  # Offset
-                f.write(struct.pack("<I", length))        # Length
-                f.write(struct.pack("<I", string_id))     # ID
-                f.write(b"\x00" * 4)                     # Padding
+                    # Find null character positions in the string
+                    null_positions = [i for i, c in enumerate(row[2]) if ord(c) == 0]
 
-                # Add string to data block
-                string_data += value + b"\x00"
-                current_offset += length + 1  # +1 for null terminator
+                    # Reconstruct bytes with null characters
+                    value = bytearray()
+                    for i, b in enumerate(original_bytes):
+                        if i in null_positions:
+                            value.append(0)  # Preserve null
+                        else:
+                            value.append(b)
 
-            # Write all string data
-            f.write(string_data)
+                    data.append((string_id, bytes(value)))
+
+            count = len(data)
+            header_size = 8 + count * 16  # 4 empty + 4 count + (16 per string header)
+
+            with open(output_file, "wb") as f:
+                # Write file header
+                f.write(b"\x00" * 4)  # Empty header
+                f.write(struct.pack("<I", count))  # String count
+
+                # Write string headers and collect data
+                string_data = b""
+                current_offset = header_size
+
+                for string_id, value in data:
+                    length = len(value)
+
+                    # Write string header
+                    f.write(struct.pack("<I", current_offset))  # Offset
+                    f.write(struct.pack("<I", length))        # Length
+                    f.write(struct.pack("<I", string_id))     # ID
+                    f.write(b"\x00" * 4)                     # Padding
+
+                    # Add string to data block
+                    string_data += value + b"\x00"
+                    current_offset += length + 1  # +1 for null terminator
+
+                # Write all string data
+                f.write(string_data)
+
+            return True, f"Conversion successful! Binary saved as: {output_file}"
+        except Exception as e:
+            return False, f"Error: {e}"
 
     def binary_to_csv(self, input_file, output_file):
         with open(input_file, "rb") as f:
